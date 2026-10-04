@@ -1,0 +1,11 @@
+{
+  "name": "logisync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LogiSync - Sistema de Gestão e Logística Integrada",
+  "scripts": {
+    "install:all": "npm install --prefix client && npm install --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "dev:server": "npm run dev --prefix server"
+  }
+}
