@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { checkDatabase } from './db';
 
 dotenv.config();
 
@@ -17,9 +18,12 @@ app.get('/', (req: Request, res: Response) => {
   });
 });
 
-app.get('/api/health', (req: Request, res: Response) => {
-  res.json({
-    status: 'online',
+app.get('/api/health', async (req: Request, res: Response) => {
+  const database = await checkDatabase();
+  res.status(database.connected ? 200 : 503).json({
+    status: database.connected ? 'online' : 'degraded',
+    environment: process.env.APP_ENV || 'desenvolvimento',
+    database,
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });

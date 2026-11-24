@@ -221,7 +221,8 @@ export const RegisterForm = () => {
         type: accountType,
         document,
       });
-      navigate('/', { replace: true });
+
+      navigate('/dashboard', { replace: true });
     }, 1500);
   };
 

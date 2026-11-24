@@ -20,3 +20,6 @@ pnpm-debug.log*
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Certificados extras específicos da máquina (ver certs/README.md)
+certs/*.crt
