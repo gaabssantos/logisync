@@ -223,11 +223,12 @@ export const LoginForm = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     login({
-      name: accountType === 'empresa' ? (identifier.split('@')[0] || 'Empresa LogiSync') : (identifier || 'Usuário LogiSync'),
+      name: accountType === 'empresa' ? (identifier.split('@')[0] || 'Empresa') : (identifier || 'Usuário LogiSync'),
       email: identifier,
       type: accountType,
     });
-    navigate('/', { replace: true });
+
+    navigate('/dashboard', { replace: true });
   };
 
   return (
