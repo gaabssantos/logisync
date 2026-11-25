@@ -2,7 +2,9 @@ import { useState } from 'react';
 import styled from 'styled-components';
 import { Building2, User, Eye, EyeOff } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, type User as AuthUser } from '../context/AuthContext';
+import { api } from '../services/api';
+import { ErrorAlert } from './ErrorAlert';
 
 const FormContainer = styled.div`
   width: 100%;
@@ -220,15 +222,25 @@ export const LoginForm = () => {
     setSearchParams({ tipo: type });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    login({
-      name: accountType === 'empresa' ? (identifier.split('@')[0] || 'Empresa') : (identifier || 'Usuário LogiSync'),
-      email: identifier,
-      type: accountType,
-    });
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-    navigate('/dashboard', { replace: true });
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const data = await api<{ token: string; user: AuthUser }>('/auth/login', {
+        method: 'POST',
+        body: { tipo: accountType, login: identifier.trim(), senha: password },
+      });
+      login(data.user, data.token);
+      navigate(data.user.type === 'empresa' ? '/pedidos' : '/dashboard', { replace: true });
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -256,6 +268,8 @@ export const LoginForm = () => {
           <span>Usuário</span>
         </TabButton>
       </TabGroup>
+
+      {error && <ErrorAlert role="alert">{error}</ErrorAlert>}
 
       <form onSubmit={handleSubmit}>
         <FormGroup>
@@ -320,7 +334,7 @@ export const LoginForm = () => {
           </ForgotPasswordLink>
         </OptionsRow>
 
-        <SubmitButton type="submit">Entrar</SubmitButton>
+        <SubmitButton type="submit" disabled={loading}>{loading ? 'Entrando...' : 'Entrar'}</SubmitButton>
       </form>
 
       <FooterText>

@@ -2,7 +2,9 @@ import { useState } from 'react';
 import styled from 'styled-components';
 import { Building2, User, Eye, EyeOff, CheckCircle } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, type User as AuthUser } from '../context/AuthContext';
+import { api } from '../services/api';
+import { ErrorAlert } from './ErrorAlert';
 
 const FormContainer = styled.div`
   width: 100%;
@@ -206,24 +208,28 @@ export const RegisterForm = () => {
     setSuccess(false);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
     if (password !== confirmPassword) {
-      alert('As senhas não coincidem!');
+      setError('As senhas não coincidem.');
       return;
     }
-
-    setSuccess(true);
-    setTimeout(() => {
-      login({
-        name,
-        email,
-        type: accountType,
-        document,
+    try {
+      const data = await api<{ token: string; user: AuthUser }>('/auth/register', {
+        method: 'POST',
+        body: { tipo: accountType, nome: name, documento: document, email, telefone: phone, senha: password },
       });
-
-      navigate('/dashboard', { replace: true });
-    }, 1500);
+      setSuccess(true);
+      setTimeout(() => {
+        login(data.user, data.token);
+        navigate(data.user.type === 'empresa' ? '/pedidos' : '/dashboard', { replace: true });
+      }, 1200);
+    } catch (err) {
+      setError((err as Error).message);
+    }
   };
 
   return (
@@ -253,6 +259,8 @@ export const RegisterForm = () => {
           <span>Usuário</span>
         </TabButton>
       </TabGroup>
+
+      {error && <ErrorAlert role="alert">{error}</ErrorAlert>}
 
       {success && (
         <SuccessAlert>

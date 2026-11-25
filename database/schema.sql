@@ -1,8 +1,10 @@
 -- =====================================================================
 -- LogiSync - Script de criação do banco de dados (MySQL 8)
--- Modelo físico baseado na Figura 32 do relatório (Modelo do BD Relacional)
+-- Modelo físico baseado na Figura 33 do relatório (Modelo do BD Relacional)
 -- Regras de negócio indicadas por RFxx referem-se aos requisitos do cap. 6.1
 -- =====================================================================
+
+SET NAMES utf8mb4;
 
 CREATE DATABASE IF NOT EXISTS logisync
   DEFAULT CHARACTER SET utf8mb4

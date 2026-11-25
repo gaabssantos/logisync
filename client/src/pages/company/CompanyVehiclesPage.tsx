@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import styled from 'styled-components';
 import { CompanySidebar } from '../../components/company/CompanySidebar';
 import { CompanyHeader } from '../../components/company/CompanyHeader';
@@ -13,6 +13,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { api, formatDate } from '../../services/api';
+import { ErrorAlert } from '../../components/ErrorAlert';
 
 const Layout = styled.div`
   display: flex;
@@ -454,7 +456,20 @@ interface VehicleItem {
   driver: string;
   capacity: string;
   lastMaintenance: string;
+  tipoApi: string;
+  rawCapacity: string;
+  driverId: number | null;
 }
+
+interface VeiculoApi {
+  id: number; placa: string; modelo: string; tipo: string; capacidade: string;
+  status: 'DISPONIVEL' | 'EM_TRANSITO' | 'MANUTENCAO'; ultimaManutencao: string | null; motorista: string | null; idMotorista: number | null;
+}
+
+const TIPO_LABEL: Record<string, string> = {
+  CAMINHAO: 'Caminhão', VAN: 'Van', UTILITARIO: 'Utilitário', CARRO: 'Carro', MOTO: 'Moto',
+};
+const STATUS_LABEL = { DISPONIVEL: 'DISPONÍVEL', EM_TRANSITO: 'EM TRÂNSITO', MANUTENCAO: 'MANUTENÇÃO' } as const;
 
 export const CompanyVehiclesPage = () => {
   const [filterStatus, setFilterStatus] = useState<
@@ -463,53 +478,47 @@ export const CompanyVehiclesPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Lista com dados e formato idênticos à imagem fornecida pelo usuário
-  const [vehicles, setVehicles] = useState<VehicleItem[]>([
-    {
-      id: '1',
-      type: 'Caminhão',
-      model: 'Mercedes-Benz',
-      plate: 'ABC-1234',
-      status: 'DISPONÍVEL',
-      driver: 'Marco Silva',
-      capacity: '15 toneladas',
-      lastMaintenance: '12/08/2025',
-    },
-    {
-      id: '2',
-      type: 'Caminhão',
-      model: 'Mercedes-Benz',
-      plate: 'ABC-1234',
-      status: 'EM TRÂNSITO',
-      driver: 'Marco Silva',
-      capacity: '15 toneladas',
-      lastMaintenance: '12/08/2025',
-    },
-    {
-      id: '3',
-      type: 'Caminhão',
-      model: 'Mercedes-Benz',
-      plate: 'ABC-1234',
-      status: 'MANUTENÇÃO',
-      driver: 'Marco Silva',
-      capacity: '15 toneladas',
-      lastMaintenance: '12/08/2025',
-    },
-    {
-      id: '4',
-      type: 'Caminhão',
-      model: 'Mercedes-Benz',
-      plate: 'ABC-1234',
-      status: 'MANUTENÇÃO',
-      driver: 'Marco Silva',
-      capacity: '15 toneladas',
-      lastMaintenance: '12/08/2025',
-    },
-  ]);
+  // Veículos e motoristas carregados da API (RF11, RF12, RF13)
+  const [vehicles, setVehicles] = useState<VehicleItem[]>([]);
+  const [drivers, setDrivers] = useState<{ id: number; nome: string; veiculo: string | null }[]>([]);
+  const [error, setError] = useState('');
+
+  const loadVehicles = async () => {
+    try {
+      const rows = await api<VeiculoApi[]>('/veiculos');
+      setVehicles(rows.map((v) => ({
+        id: String(v.id),
+        type: TIPO_LABEL[v.tipo] || v.tipo,
+        model: v.modelo,
+        plate: v.placa,
+        status: STATUS_LABEL[v.status],
+        driver: v.motorista || 'Não atribuído',
+        capacity: `${Number(v.capacidade).toLocaleString('pt-BR')} kg`,
+        lastMaintenance: v.ultimaManutencao ? formatDate(v.ultimaManutencao) : '-',
+        tipoApi: v.tipo,
+        rawCapacity: Number(v.capacidade).toLocaleString('pt-BR'),
+        driverId: v.idMotorista,
+      })));
+      setDrivers(await api('/motoristas'));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  useEffect(() => {
+    loadVehicles();
+  }, []);
+
+  const metrics = useMemo(() => ({
+    total: vehicles.length,
+    disponiveis: vehicles.filter((v) => v.status === 'DISPONÍVEL').length,
+    transito: vehicles.filter((v) => v.status === 'EM TRÂNSITO').length,
+    manutencao: vehicles.filter((v) => v.status === 'MANUTENÇÃO').length,
+  }), [vehicles]);
 
   // Form states novo veículo
   const [newModel, setNewModel] = useState('');
-  const [newType, setNewType] = useState('Caminhão');
+  const [newType, setNewType] = useState('CAMINHAO');
   const [newPlate, setNewPlate] = useState('');
   const [newDriver, setNewDriver] = useState('');
   const [newCapacity, setNewCapacity] = useState('');
@@ -530,44 +539,74 @@ export const CompanyVehiclesPage = () => {
     });
   }, [vehicles, filterStatus, searchTerm]);
 
-  const handleAddVehicle = (e: React.FormEvent) => {
-    e.preventDefault();
-    const newVehicle: VehicleItem = {
-      id: String(Date.now()),
-      type: newType,
-      model: newModel,
-      plate: newPlate.toUpperCase(),
-      status: 'DISPONÍVEL',
-      driver: newDriver || 'Não atribuído',
-      capacity: newCapacity || '10 toneladas',
-      lastMaintenance: new Date().toLocaleDateString('pt-BR'),
-    };
+  // veículo em edição (null = novo veículo) e erro exibido dentro da janela
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formError, setFormError] = useState('');
 
-    setVehicles([newVehicle, ...vehicles]);
-    setIsModalOpen(false);
+  const openNewVehicle = () => {
+    setEditingId(null);
+    setNewType('CAMINHAO');
     setNewModel('');
     setNewPlate('');
     setNewDriver('');
     setNewCapacity('');
+    setFormError('');
+    setIsModalOpen(true);
   };
 
-  const handleDelete = (id: string, model: string, plate: string) => {
-    if (confirm(`Remover veículo ${model} (${plate})?`)) {
-      setVehicles(vehicles.filter((v) => v.id !== id));
+  const openEditVehicle = (v: VehicleItem) => {
+    setEditingId(v.id);
+    setNewType(v.tipoApi);
+    setNewModel(v.model);
+    setNewPlate(v.plate);
+    setNewDriver(v.driverId ? String(v.driverId) : '');
+    setNewCapacity(v.rawCapacity);
+    setFormError('');
+    setIsModalOpen(true);
+  };
+
+  // RF12: cadastro ou edição de veículo (a API recusa placas duplicadas). Em caso de erro,
+  // a janela continua aberta com os dados digitados, e a mensagem é exibida dentro dela.
+  const handleSaveVehicle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setFormError('');
+    try {
+      await api(editingId ? `/veiculos/${editingId}` : '/veiculos', {
+        method: editingId ? 'PUT' : 'POST',
+        body: { placa: newPlate.replace('-', '').trim(), modelo: newModel, tipo: newType,
+                capacidade: newCapacity, idMotorista: newDriver ? Number(newDriver) : null },
+      });
+      setIsModalOpen(false);
+      await loadVehicles();
+    } catch (err) {
+      setFormError((err as Error).message);
     }
   };
 
-  const handleToggleMaintenance = (id: string) => {
-    setVehicles(
-      vehicles.map((v) => {
-        if (v.id === id) {
-          const nextStatus =
-            v.status === 'MANUTENÇÃO' ? 'DISPONÍVEL' : 'MANUTENÇÃO';
-          return { ...v, status: nextStatus };
-        }
-        return v;
-      })
-    );
+  // motoristas que podem ser escolhidos: sem veículo ou o atual motorista do veículo em edição
+  const editingDriverId = vehicles.find((v) => v.id === editingId)?.driverId ?? null;
+
+  const handleDelete = async (id: string, model: string, plate: string) => {
+    if (!confirm(`Remover veículo ${model} (${plate})?`)) return;
+    setError('');
+    try {
+      await api(`/veiculos/${id}`, { method: 'DELETE' });
+      await loadVehicles();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  // RF11: registra a manutenção (veículos em manutenção não recebem entregas)
+  const handleToggleMaintenance = async (id: string) => {
+    setError('');
+    try {
+      await api(`/veiculos/${id}/manutencao`, { method: 'PATCH' });
+      await loadVehicles();
+    } catch (err) {
+      setError((err as Error).message);
+    }
   };
 
   return (
@@ -584,7 +623,7 @@ export const CompanyVehiclesPage = () => {
               <Truck size={24} />
             </IconBadge>
             <MetricInfo>
-              <MetricValue>12</MetricValue>
+              <MetricValue>{metrics.total}</MetricValue>
               <MetricLabel>Total de Veículos</MetricLabel>
             </MetricInfo>
           </MetricCard>
@@ -594,7 +633,7 @@ export const CompanyVehiclesPage = () => {
               <CheckCircle2 size={24} />
             </IconBadge>
             <MetricInfo>
-              <MetricValue>8</MetricValue>
+              <MetricValue>{metrics.disponiveis}</MetricValue>
               <MetricLabel>Disponíveis</MetricLabel>
             </MetricInfo>
           </MetricCard>
@@ -604,7 +643,7 @@ export const CompanyVehiclesPage = () => {
               <Truck size={24} />
             </IconBadge>
             <MetricInfo>
-              <MetricValue>3</MetricValue>
+              <MetricValue>{metrics.transito}</MetricValue>
               <MetricLabel>Em Trânsito</MetricLabel>
             </MetricInfo>
           </MetricCard>
@@ -614,13 +653,15 @@ export const CompanyVehiclesPage = () => {
               <AlertTriangle size={24} />
             </IconBadge>
             <MetricInfo>
-              <MetricValue>1</MetricValue>
+              <MetricValue>{metrics.manutencao}</MetricValue>
               <MetricLabel>Manutenção</MetricLabel>
             </MetricInfo>
           </MetricCard>
         </MetricsGrid>
 
         {/* Barra de Filtros e Busca */}
+        {error && <ErrorAlert role="alert">{error}</ErrorAlert>}
+
         <FilterCard>
           <SearchInputWrapper>
             <Search size={18} color="#94a3b8" />
@@ -659,7 +700,7 @@ export const CompanyVehiclesPage = () => {
             </FilterPill>
           </FilterButtonsGroup>
 
-          <AddVehicleButton onClick={() => setIsModalOpen(true)}>
+          <AddVehicleButton onClick={openNewVehicle}>
             <PlusCircle size={18} />
             <span>Adicionar</span>
           </AddVehicleButton>
@@ -702,7 +743,7 @@ export const CompanyVehiclesPage = () => {
               <CardActions>
                 <ActionBtn
                   $variant="edit"
-                  onClick={() => alert(`Editar veículo ${vehicle.model} (${vehicle.plate})`)}
+                  onClick={() => openEditVehicle(vehicle)}
                 >
                   <Pencil size={13} />
                   <span>Editar</span>
@@ -734,13 +775,14 @@ export const CompanyVehiclesPage = () => {
           <ModalOverlay onClick={() => setIsModalOpen(false)}>
             <ModalCard onClick={(e) => e.stopPropagation()}>
               <ModalHeader>
-                <h3>Adicionar Novo Veículo</h3>
+                <h3>{editingId ? 'Editar Veículo' : 'Adicionar Novo Veículo'}</h3>
                 <button onClick={() => setIsModalOpen(false)}>
                   <X size={20} />
                 </button>
               </ModalHeader>
 
-              <form onSubmit={handleAddVehicle}>
+              <form onSubmit={handleSaveVehicle}>
+                {formError && <ErrorAlert role="alert">{formError}</ErrorAlert>}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                   <FormGroup>
                     <label>Tipo de Veículo</label>
@@ -748,10 +790,11 @@ export const CompanyVehiclesPage = () => {
                       value={newType}
                       onChange={(e) => setNewType(e.target.value)}
                     >
-                      <option value="Caminhão">Caminhão</option>
-                      <option value="Van">Van</option>
-                      <option value="Furgão">Furgão</option>
-                      <option value="Carreta">Carreta</option>
+                      <option value="CAMINHAO">Caminhão</option>
+                      <option value="VAN">Van</option>
+                      <option value="UTILITARIO">Utilitário</option>
+                      <option value="CARRO">Carro</option>
+                      <option value="MOTO">Moto</option>
                     </select>
                   </FormGroup>
 
@@ -781,19 +824,21 @@ export const CompanyVehiclesPage = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
                   <FormGroup>
                     <label>Motorista Responsável</label>
-                    <input
-                      type="text"
-                      placeholder="Ex: Marco Silva"
-                      value={newDriver}
-                      onChange={(e) => setNewDriver(e.target.value)}
-                    />
+                    <select value={newDriver} onChange={(e) => setNewDriver(e.target.value)}>
+                      <option value="">Não atribuído</option>
+                      {drivers.filter((d) => !d.veiculo || d.id === editingDriverId).map((d) => (
+                        <option key={d.id} value={d.id}>{d.nome}</option>
+                      ))}
+                    </select>
                   </FormGroup>
 
                   <FormGroup>
-                    <label>Capacidade de Carga</label>
+                    <label>Capacidade de Carga (kg)</label>
                     <input
                       type="text"
-                      placeholder="Ex: 15 toneladas"
+                      required
+                      inputMode="decimal"
+                      placeholder="Ex: 5.000"
                       value={newCapacity}
                       onChange={(e) => setNewCapacity(e.target.value)}
                     />
@@ -801,7 +846,7 @@ export const CompanyVehiclesPage = () => {
                 </div>
 
                 <ModalSubmitButton type="submit" style={{ width: '100%', marginTop: '1.25rem' }}>
-                  Cadastrar Veículo
+                  {editingId ? 'Salvar Alterações' : 'Cadastrar Veículo'}
                 </ModalSubmitButton>
               </form>
             </ModalCard>

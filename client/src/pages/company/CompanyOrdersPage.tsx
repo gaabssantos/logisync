@@ -1,8 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import styled from 'styled-components';
 import { CompanySidebar } from '../../components/company/CompanySidebar';
 import { CompanyHeader } from '../../components/company/CompanyHeader';
 import { Search, PlusCircle, Pencil, Trash2, X } from 'lucide-react';
+import { api, formatDate, formatMoney } from '../../services/api';
+import { ErrorAlert } from '../../components/ErrorAlert';
 
 const Layout = styled.div`
   display: flex;
@@ -186,7 +188,15 @@ const CodeText = styled.span`
   color: #94a3b8;
 `;
 
-const StatusPill = styled.span<{ $status: 'PREPARANDO' | 'PENDENTE' }>`
+const STATUS_COLORS: Record<string, [string, string]> = {
+  PENDENTE: ['#fee2e2', '#dc2626'],
+  PREPARANDO: ['#dbeafe', '#2563eb'],
+  ENVIADO: ['#ede9fe', '#7c3aed'],
+  ENTREGUE: ['#dcfce7', '#16a34a'],
+  CANCELADO: ['#f1f5f9', '#64748b'],
+};
+
+const StatusPill = styled.span<{ $status: string }>`
   display: inline-block;
   padding: 0.28rem 0.75rem;
   border-radius: 9999px;
@@ -194,17 +204,8 @@ const StatusPill = styled.span<{ $status: 'PREPARANDO' | 'PENDENTE' }>`
   font-weight: 700;
   letter-spacing: 0.4px;
   text-transform: uppercase;
-
-  ${({ $status }) =>
-    $status === 'PREPARANDO'
-      ? `
-        background-color: #dbeafe;
-        color: #2563eb;
-      `
-      : `
-        background-color: #fee2e2;
-        color: #dc2626;
-      `}
+  background-color: ${({ $status }) => (STATUS_COLORS[$status] || STATUS_COLORS.CANCELADO)[0]};
+  color: ${({ $status }) => (STATUS_COLORS[$status] || STATUS_COLORS.CANCELADO)[1]};
 `;
 
 const PriorityPill = styled.span<{ $priority: 'Alta' | 'Média' | 'Baixa' }>`
@@ -328,12 +329,6 @@ const PageNumberButton = styled.button<{ $active?: boolean }>`
       `}
 `;
 
-const PageEllipsis = styled.span`
-  color: #94a3b8;
-  font-size: 0.85rem;
-  padding: 0 0.25rem;
-`;
-
 /* Modal de Novo Pedido */
 const ModalOverlay = styled.div`
   position: fixed;
@@ -421,105 +416,62 @@ const ModalSubmitButton = styled.button`
 `;
 
 interface OrderItem {
+  dbId: number;
   id: string;
   client: string;
   origin: string;
   destination: string;
-  status: 'PREPARANDO' | 'PENDENTE';
+  status: string;
   priority: 'Alta' | 'Média' | 'Baixa';
   date: string;
   value: string;
+  rawValue: string;
 }
+
+interface PedidoApi {
+  id: number; codigo: string; cliente: string; origem: string; destino: string;
+  data: string; valor: string; prioridade: 'ALTA' | 'MEDIA' | 'BAIXA'; status: string;
+}
+
+// rótulos exibidos na tela para os valores gravados no banco
+const STATUS_LABEL: Record<string, string> = {
+  PENDENTE: 'PENDENTE', EM_SEPARACAO: 'PREPARANDO', ENVIADO: 'ENVIADO', ENTREGUE: 'ENTREGUE', CANCELADO: 'CANCELADO',
+};
+const PRIORIDADE_LABEL = { ALTA: 'Alta', MEDIA: 'Média', BAIXA: 'Baixa' } as const;
+const PRIORIDADE_API = { Alta: 'ALTA', 'Média': 'MEDIA', Baixa: 'BAIXA' } as const;
 
 export const CompanyOrdersPage = () => {
   const [filterStatus, setFilterStatus] = useState<'Todos' | 'PENDENTE' | 'PREPARANDO'>('Todos');
   const [searchTerm, setSearchTerm] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Lista inicial com todos os itens exibidos na imagem enviada pelo usuário
-  const [orders, setOrders] = useState<OrderItem[]>([
-    {
-      id: '#001',
-      client: 'João Silva',
-      origin: 'São Paulo, SP',
-      destination: 'Vitória, ES',
-      status: 'PREPARANDO',
-      priority: 'Média',
-      date: '14/09/2025',
-      value: 'R$ 89,90',
-    },
-    {
-      id: '#002',
-      client: 'Marcos',
-      origin: 'Salvador, BA',
-      destination: 'Natal, RN',
-      status: 'PENDENTE',
-      priority: 'Alta',
-      date: '13/09/2025',
-      value: 'R$ 67,50',
-    },
-    {
-      id: '#003',
-      client: 'Antonio',
-      origin: 'Porto Alegre, RS',
-      destination: 'Belém, PA',
-      status: 'PENDENTE',
-      priority: 'Baixa',
-      date: '12/09/2025',
-      value: 'R$ 125,00',
-    },
-    {
-      id: '#004',
-      client: 'Lucas',
-      origin: 'Recife, PE',
-      destination: 'Curitiba, PR',
-      status: 'PREPARANDO',
-      priority: 'Média',
-      date: '11/09/2025',
-      value: 'R$ 45,20',
-    },
-    {
-      id: '#005',
-      client: 'Roberto',
-      origin: 'Curitiba, PR',
-      destination: 'Recife, PE',
-      status: 'PENDENTE',
-      priority: 'Baixa',
-      date: '14/09/2025',
-      value: 'R$ 98,75',
-    },
-    {
-      id: '#006',
-      client: 'Carlos',
-      origin: 'Belém, PA',
-      destination: 'Porto Alegre, RS',
-      status: 'PREPARANDO',
-      priority: 'Baixa',
-      date: '13/09/2025',
-      value: 'R$ 156,80',
-    },
-    {
-      id: '#006',
-      client: 'Ana Clara',
-      origin: 'Natal, RN',
-      destination: 'Salvador, BA',
-      status: 'PENDENTE',
-      priority: 'Média',
-      date: '12/09/2025',
-      value: 'R$ 189,40',
-    },
-    {
-      id: '#007',
-      client: 'Julia',
-      origin: 'Vitória, ES',
-      destination: 'São Paulo, SP',
-      status: 'PENDENTE',
-      priority: 'Baixa',
-      date: '14/09/2025',
-      value: 'R$ 112,30',
-    },
-  ]);
+  // Pedidos carregados da API (RF07)
+  const [orders, setOrders] = useState<OrderItem[]>([]);
+  const [error, setError] = useState('');
+
+  const loadOrders = async () => {
+    try {
+      const rows = await api<PedidoApi[]>('/pedidos');
+      setOrders(rows.map((r) => ({
+        dbId: r.id,
+        id: r.codigo,
+        client: r.cliente,
+        origin: r.origem,
+        destination: r.destino,
+        status: STATUS_LABEL[r.status] || r.status,
+        priority: PRIORIDADE_LABEL[r.prioridade] || 'Média',
+        date: formatDate(r.data),
+        value: formatMoney(r.valor),
+        rawValue: Number(r.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 }),
+      })));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  useEffect(() => {
+    loadOrders();
+  }, []);
 
   // Form novo pedido
   const [newClient, setNewClient] = useState('');
@@ -541,32 +493,61 @@ export const CompanyOrdersPage = () => {
     });
   }, [orders, filterStatus, searchTerm]);
 
-  const handleCreateOrder = (e: React.FormEvent) => {
-    e.preventDefault();
-    const nextNum = orders.length + 1;
-    const formattedId = `#${String(nextNum).padStart(3, '0')}`;
-    const newOrder: OrderItem = {
-      id: formattedId,
-      client: newClient,
-      origin: newOrigin,
-      destination: newDestination,
-      status: 'PREPARANDO',
-      priority: newPriority,
-      date: new Date().toLocaleDateString('pt-BR'),
-      value: newValue.startsWith('R$') ? newValue : `R$ ${newValue}`,
-    };
+  // pedido em edição (null = novo pedido) e erro exibido dentro da janela
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [formError, setFormError] = useState('');
 
-    setOrders([newOrder, ...orders]);
-    setIsModalOpen(false);
+  const openNewOrder = () => {
+    setEditingId(null);
     setNewClient('');
     setNewOrigin('');
     setNewDestination('');
+    setNewPriority('Média');
     setNewValue('');
+    setFormError('');
+    setIsModalOpen(true);
   };
 
-  const handleDelete = (id: string, client: string) => {
-    if (confirm(`Tem certeza que deseja remover o pedido de ${client}?`)) {
-      setOrders(orders.filter((o) => o.id !== id));
+  // RF06: edição de pedido (a API recusa pedidos que não estão pendentes)
+  const openEditOrder = (order: OrderItem) => {
+    setEditingId(order.dbId);
+    setNewClient(order.client);
+    setNewOrigin(order.origin);
+    setNewDestination(order.destination);
+    setNewPriority(order.priority);
+    setNewValue(order.rawValue);
+    setFormError('');
+    setIsModalOpen(true);
+  };
+
+  // RF05/RF06: cadastro ou edição na API. Em caso de erro, a janela continua aberta
+  // com os dados digitados, e a mensagem é exibida dentro dela.
+  const handleSaveOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setFormError('');
+    try {
+      await api(editingId ? `/pedidos/${editingId}` : '/pedidos', {
+        method: editingId ? 'PUT' : 'POST',
+        body: { cliente: newClient, origem: newOrigin, destino: newDestination,
+                valor: newValue, prioridade: PRIORIDADE_API[newPriority] },
+      });
+      setIsModalOpen(false);
+      await loadOrders();
+    } catch (err) {
+      setFormError((err as Error).message);
+    }
+  };
+
+  // RF06: exclusão (a API recusa pedidos que não estão pendentes)
+  const handleDelete = async (dbId: number, client: string) => {
+    if (!confirm(`Tem certeza que deseja remover o pedido de ${client}?`)) return;
+    setError('');
+    try {
+      await api(`/pedidos/${dbId}`, { method: 'DELETE' });
+      await loadOrders();
+    } catch (err) {
+      setError((err as Error).message);
     }
   };
 
@@ -578,6 +559,8 @@ export const CompanyOrdersPage = () => {
         <CompanyHeader title="Pedidos" />
 
         {/* Barra de Filtros e Ações */}
+        {error && <ErrorAlert role="alert">{error}</ErrorAlert>}
+
         <FilterCard>
           <SearchInputWrapper>
             <Search size={18} color="#94a3b8" />
@@ -610,7 +593,7 @@ export const CompanyOrdersPage = () => {
             </FilterPill>
           </FilterButtonsGroup>
 
-          <NewOrderButton onClick={() => setIsModalOpen(true)}>
+          <NewOrderButton onClick={openNewOrder}>
             <PlusCircle size={18} />
             <span>Novo Pedido</span>
           </NewOrderButton>
@@ -666,14 +649,14 @@ export const CompanyOrdersPage = () => {
                       <ActionsGroup>
                         <ActionButton
                           $type="edit"
-                          onClick={() => alert(`Editar pedido ${order.id}`)}
+                          onClick={() => openEditOrder(order)}
                           aria-label="Editar Pedido"
                         >
                           <Pencil size={15} />
                         </ActionButton>
                         <ActionButton
                           $type="delete"
-                          onClick={() => handleDelete(order.id, order.client)}
+                          onClick={() => handleDelete(order.dbId, order.client)}
                           aria-label="Excluir Pedido"
                         >
                           <Trash2 size={15} />
@@ -688,44 +671,9 @@ export const CompanyOrdersPage = () => {
 
           {/* Paginação */}
           <PaginationWrapper>
-            <PageNavButton
-              disabled={currentPage === 1}
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-            >
-              ◀ Anterior
-            </PageNavButton>
-
-            <PageNumberButton
-              $active={currentPage === 1}
-              onClick={() => setCurrentPage(1)}
-            >
-              1
-            </PageNumberButton>
-            <PageNumberButton
-              $active={currentPage === 2}
-              onClick={() => setCurrentPage(2)}
-            >
-              2
-            </PageNumberButton>
-            <PageNumberButton
-              $active={currentPage === 3}
-              onClick={() => setCurrentPage(3)}
-            >
-              3
-            </PageNumberButton>
-
-            <PageEllipsis>...</PageEllipsis>
-
-            <PageNumberButton
-              $active={currentPage === 63}
-              onClick={() => setCurrentPage(63)}
-            >
-              63
-            </PageNumberButton>
-
-            <PageNavButton onClick={() => setCurrentPage((p) => p + 1)}>
-              Próximo ▶
-            </PageNavButton>
+            <PageNavButton disabled>◀ Anterior</PageNavButton>
+            <PageNumberButton $active>1</PageNumberButton>
+            <PageNavButton disabled>Próximo ▶</PageNavButton>
           </PaginationWrapper>
         </TableCard>
 
@@ -734,13 +682,14 @@ export const CompanyOrdersPage = () => {
           <ModalOverlay onClick={() => setIsModalOpen(false)}>
             <ModalCard onClick={(e) => e.stopPropagation()}>
               <ModalHeader>
-                <h3>Criar Novo Pedido</h3>
+                <h3>{editingId ? 'Editar Pedido' : 'Criar Novo Pedido'}</h3>
                 <button onClick={() => setIsModalOpen(false)}>
                   <X size={20} />
                 </button>
               </ModalHeader>
 
-              <form onSubmit={handleCreateOrder}>
+              <form onSubmit={handleSaveOrder}>
+                {formError && <ErrorAlert role="alert">{formError}</ErrorAlert>}
                 <FormGroup>
                   <label>Nome do Cliente</label>
                   <input
@@ -792,7 +741,8 @@ export const CompanyOrdersPage = () => {
                     <input
                       type="text"
                       required
-                      placeholder="Ex: 95,00"
+                      inputMode="decimal"
+                      placeholder="Ex: 1.234,56"
                       value={newValue}
                       onChange={(e) => setNewValue(e.target.value)}
                     />
@@ -800,7 +750,7 @@ export const CompanyOrdersPage = () => {
                 </div>
 
                 <ModalSubmitButton type="submit" style={{ width: '100%', marginTop: '1.25rem' }}>
-                  Salvar Pedido
+                  {editingId ? 'Salvar Alterações' : 'Salvar Pedido'}
                 </ModalSubmitButton>
               </form>
             </ModalCard>

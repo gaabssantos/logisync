@@ -2,6 +2,12 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { checkDatabase } from './db';
+import { errorHandler } from './errors';
+import { authRouter } from './routes/auth';
+import { pedidosRouter } from './routes/pedidos';
+import { entregasRouter } from './routes/entregas';
+import { motoristasRouter, veiculosRouter } from './routes/frota';
+import { rastreamentoRouter } from './routes/rastreamento';
 
 dotenv.config();
 
@@ -28,6 +34,15 @@ app.get('/api/health', async (req: Request, res: Response) => {
     uptime: process.uptime()
   });
 });
+
+// Rotas da API REST
+app.use('/api/auth', authRouter);
+app.use('/api/pedidos', pedidosRouter);
+app.use('/api/entregas', entregasRouter);
+app.use('/api/veiculos', veiculosRouter);
+app.use('/api/motoristas', motoristasRouter);
+app.use('/api', rastreamentoRouter);
+app.use(errorHandler);
 
 app.listen(PORT, () => {
   console.log(`[LogiSync Server] Servidor rodando na porta ${PORT}`);
