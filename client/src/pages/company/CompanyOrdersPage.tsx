@@ -425,6 +425,7 @@ interface OrderItem {
   priority: 'Alta' | 'Média' | 'Baixa';
   date: string;
   value: string;
+  rawValue: string;
 }
 
 interface PedidoApi {
@@ -461,6 +462,7 @@ export const CompanyOrdersPage = () => {
         priority: PRIORIDADE_LABEL[r.prioridade] || 'Média',
         date: formatDate(r.data),
         value: formatMoney(r.valor),
+        rawValue: Number(r.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 }),
       })));
     } catch (err) {
       setError((err as Error).message);
@@ -491,25 +493,49 @@ export const CompanyOrdersPage = () => {
     });
   }, [orders, filterStatus, searchTerm]);
 
-  // RF05: cadastro de pedido na API
-  const handleCreateOrder = async (e: React.FormEvent) => {
+  // pedido em edição (null = novo pedido) e erro exibido dentro da janela
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [formError, setFormError] = useState('');
+
+  const openNewOrder = () => {
+    setEditingId(null);
+    setNewClient('');
+    setNewOrigin('');
+    setNewDestination('');
+    setNewPriority('Média');
+    setNewValue('');
+    setFormError('');
+    setIsModalOpen(true);
+  };
+
+  // RF06: edição de pedido (a API recusa pedidos que não estão pendentes)
+  const openEditOrder = (order: OrderItem) => {
+    setEditingId(order.dbId);
+    setNewClient(order.client);
+    setNewOrigin(order.origin);
+    setNewDestination(order.destination);
+    setNewPriority(order.priority);
+    setNewValue(order.rawValue);
+    setFormError('');
+    setIsModalOpen(true);
+  };
+
+  // RF05/RF06: cadastro ou edição na API. Em caso de erro, a janela continua aberta
+  // com os dados digitados, e a mensagem é exibida dentro dela.
+  const handleSaveOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setFormError('');
     try {
-      await api('/pedidos', {
-        method: 'POST',
+      await api(editingId ? `/pedidos/${editingId}` : '/pedidos', {
+        method: editingId ? 'PUT' : 'POST',
         body: { cliente: newClient, origem: newOrigin, destino: newDestination,
-                valor: newValue.replace('R$', '').trim(), prioridade: PRIORIDADE_API[newPriority] },
+                valor: newValue, prioridade: PRIORIDADE_API[newPriority] },
       });
       setIsModalOpen(false);
-      setNewClient('');
-      setNewOrigin('');
-      setNewDestination('');
-      setNewValue('');
       await loadOrders();
     } catch (err) {
-      setError((err as Error).message);
-      setIsModalOpen(false);
+      setFormError((err as Error).message);
     }
   };
 
@@ -567,7 +593,7 @@ export const CompanyOrdersPage = () => {
             </FilterPill>
           </FilterButtonsGroup>
 
-          <NewOrderButton onClick={() => setIsModalOpen(true)}>
+          <NewOrderButton onClick={openNewOrder}>
             <PlusCircle size={18} />
             <span>Novo Pedido</span>
           </NewOrderButton>
@@ -623,7 +649,7 @@ export const CompanyOrdersPage = () => {
                       <ActionsGroup>
                         <ActionButton
                           $type="edit"
-                          onClick={() => alert(`Editar pedido ${order.id}`)}
+                          onClick={() => openEditOrder(order)}
                           aria-label="Editar Pedido"
                         >
                           <Pencil size={15} />
@@ -656,13 +682,14 @@ export const CompanyOrdersPage = () => {
           <ModalOverlay onClick={() => setIsModalOpen(false)}>
             <ModalCard onClick={(e) => e.stopPropagation()}>
               <ModalHeader>
-                <h3>Criar Novo Pedido</h3>
+                <h3>{editingId ? 'Editar Pedido' : 'Criar Novo Pedido'}</h3>
                 <button onClick={() => setIsModalOpen(false)}>
                   <X size={20} />
                 </button>
               </ModalHeader>
 
-              <form onSubmit={handleCreateOrder}>
+              <form onSubmit={handleSaveOrder}>
+                {formError && <ErrorAlert role="alert">{formError}</ErrorAlert>}
                 <FormGroup>
                   <label>Nome do Cliente</label>
                   <input
@@ -714,7 +741,8 @@ export const CompanyOrdersPage = () => {
                     <input
                       type="text"
                       required
-                      placeholder="Ex: 95,00"
+                      inputMode="decimal"
+                      placeholder="Ex: 1.234,56"
                       value={newValue}
                       onChange={(e) => setNewValue(e.target.value)}
                     />
@@ -722,7 +750,7 @@ export const CompanyOrdersPage = () => {
                 </div>
 
                 <ModalSubmitButton type="submit" style={{ width: '100%', marginTop: '1.25rem' }}>
-                  Salvar Pedido
+                  {editingId ? 'Salvar Alterações' : 'Salvar Pedido'}
                 </ModalSubmitButton>
               </form>
             </ModalCard>

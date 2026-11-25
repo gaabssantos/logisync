@@ -40,6 +40,21 @@ export class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
+/**
+ * Converte um número digitado no formato brasileiro ("1.234,56", "R$ 95,00", "5000")
+ * e recusa valores inválidos com uma mensagem que explica como corrigir.
+ */
+export function parseNumero(valor: unknown, campo: string, exemplo: string): number {
+  let s = String(valor ?? '').replace(/R\$|\s/g, '');
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');      // 1.234,56 -> 1234.56
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');      // 1.234 -> 1234
+  const n = Number(s);
+  if (!s || !Number.isFinite(n) || n <= 0) {
+    throw new HttpError(400, `Não foi possível entender ${campo}. Informe um número maior que zero, por exemplo ${exemplo}.`);
+  }
+  return n;
+}
+
 // Permite usar funções async nas rotas, encaminhando erros ao errorHandler
 export const wrap = (fn: (req: any, res: Response) => Promise<unknown>) =>
   (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };

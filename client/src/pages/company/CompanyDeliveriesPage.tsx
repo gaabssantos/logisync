@@ -433,9 +433,13 @@ export const CompanyDeliveriesPage = () => {
     setError('');
     try {
       if (item.dbStatus === 'AGUARDANDO') {
+        // a saída para entrega não pode ser desfeita pela tela, por isso é confirmada antes
+        if (!confirm(`Iniciar a entrega ${item.id} (${item.route}) com o motorista ${item.driver}?\n\n`
+          + 'O status passará para "Em trânsito" e não poderá voltar para "Aguardando".')) return;
         await api(`/entregas/${item.dbId}/status`, { method: 'PATCH', body: { status: 'EM_TRANSITO' } });
       } else {
-        const recebedor = prompt(`Nome de quem recebeu a encomenda ${item.id}:`);
+        const recebedor = prompt(`Concluir a entrega ${item.id} (${item.route})?\n\n`
+          + 'A entrega concluída não poderá ser reaberta. Informe o nome de quem recebeu a encomenda:');
         if (recebedor === null) return;
         await api(`/entregas/${item.dbId}/status`, { method: 'PATCH', body: { status: 'ENTREGUE', recebedor: recebedor.trim() } });
       }

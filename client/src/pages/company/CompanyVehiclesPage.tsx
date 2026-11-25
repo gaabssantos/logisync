@@ -456,11 +456,14 @@ interface VehicleItem {
   driver: string;
   capacity: string;
   lastMaintenance: string;
+  tipoApi: string;
+  rawCapacity: string;
+  driverId: number | null;
 }
 
 interface VeiculoApi {
   id: number; placa: string; modelo: string; tipo: string; capacidade: string;
-  status: 'DISPONIVEL' | 'EM_TRANSITO' | 'MANUTENCAO'; ultimaManutencao: string | null; motorista: string | null;
+  status: 'DISPONIVEL' | 'EM_TRANSITO' | 'MANUTENCAO'; ultimaManutencao: string | null; motorista: string | null; idMotorista: number | null;
 }
 
 const TIPO_LABEL: Record<string, string> = {
@@ -492,6 +495,9 @@ export const CompanyVehiclesPage = () => {
         driver: v.motorista || 'Não atribuído',
         capacity: `${Number(v.capacidade).toLocaleString('pt-BR')} kg`,
         lastMaintenance: v.ultimaManutencao ? formatDate(v.ultimaManutencao) : '-',
+        tipoApi: v.tipo,
+        rawCapacity: Number(v.capacidade).toLocaleString('pt-BR'),
+        driverId: v.idMotorista,
       })));
       setDrivers(await api('/motoristas'));
     } catch (err) {
@@ -533,27 +539,53 @@ export const CompanyVehiclesPage = () => {
     });
   }, [vehicles, filterStatus, searchTerm]);
 
-  // RF12: cadastro de veículo (a API recusa placas duplicadas)
-  const handleAddVehicle = async (e: React.FormEvent) => {
+  // veículo em edição (null = novo veículo) e erro exibido dentro da janela
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formError, setFormError] = useState('');
+
+  const openNewVehicle = () => {
+    setEditingId(null);
+    setNewType('CAMINHAO');
+    setNewModel('');
+    setNewPlate('');
+    setNewDriver('');
+    setNewCapacity('');
+    setFormError('');
+    setIsModalOpen(true);
+  };
+
+  const openEditVehicle = (v: VehicleItem) => {
+    setEditingId(v.id);
+    setNewType(v.tipoApi);
+    setNewModel(v.model);
+    setNewPlate(v.plate);
+    setNewDriver(v.driverId ? String(v.driverId) : '');
+    setNewCapacity(v.rawCapacity);
+    setFormError('');
+    setIsModalOpen(true);
+  };
+
+  // RF12: cadastro ou edição de veículo (a API recusa placas duplicadas). Em caso de erro,
+  // a janela continua aberta com os dados digitados, e a mensagem é exibida dentro dela.
+  const handleSaveVehicle = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setFormError('');
     try {
-      await api('/veiculos', {
-        method: 'POST',
+      await api(editingId ? `/veiculos/${editingId}` : '/veiculos', {
+        method: editingId ? 'PUT' : 'POST',
         body: { placa: newPlate.replace('-', '').trim(), modelo: newModel, tipo: newType,
-                capacidade: Number(newCapacity.replace(/\D/g, '')) || 0, idMotorista: newDriver ? Number(newDriver) : null },
+                capacidade: newCapacity, idMotorista: newDriver ? Number(newDriver) : null },
       });
       setIsModalOpen(false);
-      setNewModel('');
-      setNewPlate('');
-      setNewDriver('');
-      setNewCapacity('');
       await loadVehicles();
     } catch (err) {
-      setError((err as Error).message);
-      setIsModalOpen(false);
+      setFormError((err as Error).message);
     }
   };
+
+  // motoristas que podem ser escolhidos: sem veículo ou o atual motorista do veículo em edição
+  const editingDriverId = vehicles.find((v) => v.id === editingId)?.driverId ?? null;
 
   const handleDelete = async (id: string, model: string, plate: string) => {
     if (!confirm(`Remover veículo ${model} (${plate})?`)) return;
@@ -668,7 +700,7 @@ export const CompanyVehiclesPage = () => {
             </FilterPill>
           </FilterButtonsGroup>
 
-          <AddVehicleButton onClick={() => setIsModalOpen(true)}>
+          <AddVehicleButton onClick={openNewVehicle}>
             <PlusCircle size={18} />
             <span>Adicionar</span>
           </AddVehicleButton>
@@ -711,7 +743,7 @@ export const CompanyVehiclesPage = () => {
               <CardActions>
                 <ActionBtn
                   $variant="edit"
-                  onClick={() => alert(`Editar veículo ${vehicle.model} (${vehicle.plate})`)}
+                  onClick={() => openEditVehicle(vehicle)}
                 >
                   <Pencil size={13} />
                   <span>Editar</span>
@@ -743,13 +775,14 @@ export const CompanyVehiclesPage = () => {
           <ModalOverlay onClick={() => setIsModalOpen(false)}>
             <ModalCard onClick={(e) => e.stopPropagation()}>
               <ModalHeader>
-                <h3>Adicionar Novo Veículo</h3>
+                <h3>{editingId ? 'Editar Veículo' : 'Adicionar Novo Veículo'}</h3>
                 <button onClick={() => setIsModalOpen(false)}>
                   <X size={20} />
                 </button>
               </ModalHeader>
 
-              <form onSubmit={handleAddVehicle}>
+              <form onSubmit={handleSaveVehicle}>
+                {formError && <ErrorAlert role="alert">{formError}</ErrorAlert>}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                   <FormGroup>
                     <label>Tipo de Veículo</label>
@@ -793,7 +826,7 @@ export const CompanyVehiclesPage = () => {
                     <label>Motorista Responsável</label>
                     <select value={newDriver} onChange={(e) => setNewDriver(e.target.value)}>
                       <option value="">Não atribuído</option>
-                      {drivers.filter((d) => !d.veiculo).map((d) => (
+                      {drivers.filter((d) => !d.veiculo || d.id === editingDriverId).map((d) => (
                         <option key={d.id} value={d.id}>{d.nome}</option>
                       ))}
                     </select>
@@ -804,7 +837,8 @@ export const CompanyVehiclesPage = () => {
                     <input
                       type="text"
                       required
-                      placeholder="Ex: 5000"
+                      inputMode="decimal"
+                      placeholder="Ex: 5.000"
                       value={newCapacity}
                       onChange={(e) => setNewCapacity(e.target.value)}
                     />
@@ -812,7 +846,7 @@ export const CompanyVehiclesPage = () => {
                 </div>
 
                 <ModalSubmitButton type="submit" style={{ width: '100%', marginTop: '1.25rem' }}>
-                  Cadastrar Veículo
+                  {editingId ? 'Salvar Alterações' : 'Cadastrar Veículo'}
                 </ModalSubmitButton>
               </form>
             </ModalCard>

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { pool } from '../db';
 import { AuthRequest, requireAuth, requireEmpresa } from '../auth';
-import { HttpError, wrap } from '../errors';
+import { HttpError, parseNumero, wrap } from '../errors';
 
 // ---------------- Veículos (RF11, RF12, RF13) ----------------
 export const veiculosRouter = Router();
@@ -11,7 +11,7 @@ veiculosRouter.use(requireAuth, requireEmpresa);
 veiculosRouter.get('/', wrap(async (req: AuthRequest, res) => {
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT v.id_veiculo AS id, v.placa, v.modelo, v.tipo, v.capacidade, v.status, v.ultima_manutencao AS ultimaManutencao,
-            m.nome AS motorista
+            v.id_motorista AS idMotorista, m.nome AS motorista
        FROM veiculo v LEFT JOIN motorista m ON m.id_motorista = v.id_motorista
       WHERE v.id_empresa = ? AND v.ativo = 1 ORDER BY v.id_veiculo`, [req.user!.empresaId]);
   res.json(rows);
@@ -22,8 +22,22 @@ veiculosRouter.post('/', wrap(async (req: AuthRequest, res) => {
   if (!placa || !modelo || !tipo || !capacidade) throw new HttpError(400, 'Preencha placa, modelo, tipo e capacidade.');
   const [r] = await pool.query<ResultSetHeader>(
     'INSERT INTO veiculo (id_empresa, id_motorista, placa, modelo, tipo, capacidade) VALUES (?, ?, ?, ?, ?, ?)',
-    [req.user!.empresaId, idMotorista || null, String(placa).toUpperCase(), modelo, tipo, Number(capacidade)]);
+    [req.user!.empresaId, idMotorista || null, String(placa).toUpperCase(), modelo, tipo,
+     parseNumero(capacidade, 'a capacidade', '5.000')]);
   res.status(201).json({ id: r.insertId, message: 'Veículo cadastrado com sucesso.' });
+}));
+
+// edição dos dados do veículo (RF12: a placa continua única; RF13: um veículo por motorista)
+veiculosRouter.put('/:id', wrap(async (req: AuthRequest, res) => {
+  const { placa, modelo, tipo, capacidade, idMotorista } = req.body ?? {};
+  if (!placa || !modelo || !tipo) throw new HttpError(400, 'Preencha placa, modelo, tipo e capacidade.');
+  const [r] = await pool.query<ResultSetHeader>(
+    `UPDATE veiculo SET placa = ?, modelo = ?, tipo = ?, capacidade = ?, id_motorista = ?
+      WHERE id_veiculo = ? AND id_empresa = ?`,
+    [String(placa).toUpperCase(), modelo, tipo, parseNumero(capacidade, 'a capacidade', '5.000'), idMotorista || null,
+     req.params.id, req.user!.empresaId]);
+  if (!r.affectedRows) throw new HttpError(404, 'Veículo não encontrado.');
+  res.json({ message: 'Veículo atualizado com sucesso.' });
 }));
 
 // alterna entre "em manutenção" e "disponível" (RF11)
