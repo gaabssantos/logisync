@@ -6,6 +6,7 @@
 -- (armazenada como hash bcrypt, custo 10)
 -- =====================================================================
 
+SET NAMES utf8mb4;
 USE logisync;
 
 SET @senha = '$2b$10$SW1dXhAR5o2YeYgQotKsruE0aSmhpngKlXVhEcEBgjYfhUriGI8PO';

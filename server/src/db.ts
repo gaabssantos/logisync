@@ -9,6 +9,8 @@ export const pool = mysql.createPool({
   user: process.env.DB_USER || 'logisync',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'logisync',
+  // datas como texto ("AAAA-MM-DD HH:MM:SS"), sem conversão de fuso horário
+  dateStrings: true,
   waitForConnections: true,
   connectionLimit: 10,
 });
