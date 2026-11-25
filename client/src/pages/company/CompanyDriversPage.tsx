@@ -1,7 +1,36 @@
+import { useEffect, useMemo, useState } from 'react';
 import styled from 'styled-components';
 import { CompanySidebar } from '../../components/company/CompanySidebar';
 import { CompanyHeader } from '../../components/company/CompanyHeader';
 import { Plus, Search, Phone } from 'lucide-react';
+import { api } from '../../services/api';
+import { ErrorAlert } from '../../components/ErrorAlert';
+
+const FormCard = styled.form`
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr) auto;
+  gap: 0.6rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+
+  input {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 0.55rem 0.7rem;
+    font-size: 0.85rem;
+  }
+
+  button {
+    background: #2580d3;
+    color: #ffffff;
+    border-radius: 8px;
+    padding: 0 1rem;
+    font-weight: 600;
+  }
+`;
 
 const Layout = styled.div`
   display: flex;
@@ -213,49 +242,57 @@ interface Driver {
   deliveriesToday: number;
 }
 
+interface MotoristaApi {
+  id: number; nome: string; telefone: string | null; status: 'DISPONIVEL' | 'EM_ROTA' | 'FOLGA';
+  veiculo: string | null; entregasHoje: number;
+}
+
+const STATUS_LABEL = { DISPONIVEL: 'DISPONÍVEL', EM_ROTA: 'EM ROTA', FOLGA: 'FOLGA' } as const;
+
 export const CompanyDriversPage = () => {
-  const drivers: Driver[] = [
-    {
-      id: 'MOT-01',
-      name: 'Carlos Eduardo Lima',
-      phone: '(11) 98765-4321',
-      vehicle: 'Mercedes Sprinter (ABC-1234)',
-      status: 'EM ROTA',
-      deliveriesToday: 14,
-    },
-    {
-      id: 'MOT-02',
-      name: 'Ricardo Souza',
-      phone: '(21) 97654-3210',
-      vehicle: 'VW Delivery (XYZ-5678)',
-      status: 'DISPONÍVEL',
-      deliveriesToday: 8,
-    },
-    {
-      id: 'MOT-03',
-      name: 'Marcos Vinicius',
-      phone: '(31) 96543-2109',
-      vehicle: 'Renault Master (KJH-9876)',
-      status: 'EM ROTA',
-      deliveriesToday: 19,
-    },
-    {
-      id: 'MOT-04',
-      name: 'Felipe Alencar',
-      phone: '(85) 95432-1098',
-      vehicle: 'Iveco Daily (BRA-2E19)',
-      status: 'DISPONÍVEL',
-      deliveriesToday: 11,
-    },
-    {
-      id: 'MOT-05',
-      name: 'Lucas Martins',
-      phone: '(41) 94321-0987',
-      vehicle: 'Em manutenção',
-      status: 'FOLGA',
-      deliveriesToday: 0,
-    },
-  ];
+  // Motoristas carregados da API (RF13)
+  const [list, setList] = useState<Driver[]>([]);
+  const [search, setSearch] = useState('');
+  const [error, setError] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ nome: '', cpf: '', cnh: '', telefone: '', email: '' });
+
+  const loadDrivers = async () => {
+    try {
+      const rows = await api<MotoristaApi[]>('/motoristas');
+      setList(rows.map((m) => ({
+        id: `MOT-${String(m.id).padStart(2, '0')}`,
+        name: m.nome,
+        phone: m.telefone || '-',
+        vehicle: m.veiculo || 'Sem veículo',
+        status: STATUS_LABEL[m.status],
+        deliveriesToday: Number(m.entregasHoje),
+      })));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  useEffect(() => {
+    loadDrivers();
+  }, []);
+
+  const drivers = useMemo(() => list.filter((d) =>
+    [d.name, d.id, d.vehicle].some((v) => v.toLowerCase().includes(search.toLowerCase()))), [list, search]);
+
+  // cadastro de motorista (a API recusa CPF ou CNH duplicados)
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    try {
+      await api('/motoristas', { method: 'POST', body: form });
+      setForm({ nome: '', cpf: '', cnh: '', telefone: '', email: '' });
+      setShowForm(false);
+      await loadDrivers();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
 
   return (
     <Layout>
@@ -267,19 +304,32 @@ export const CompanyDriversPage = () => {
         <TopActions>
           <SearchBox>
             <Search size={18} color="#94a3b8" />
-            <input type="text" placeholder="Buscar por nome, placa ou ID..." />
+            <input type="text" placeholder="Buscar por nome, placa ou ID..." value={search} onChange={(e) => setSearch(e.target.value)} />
           </SearchBox>
 
-          <AddButton onClick={() => alert('Cadastrar novo motorista')}>
+          <AddButton onClick={() => setShowForm(!showForm)}>
             <Plus size={18} />
             <span>Novo Motorista</span>
           </AddButton>
         </TopActions>
 
+        {error && <ErrorAlert role="alert">{error}</ErrorAlert>}
+
+        {showForm && (
+          <FormCard onSubmit={handleCreate}>
+            <input required placeholder="Nome" value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} />
+            <input required placeholder="CPF" value={form.cpf} onChange={(e) => setForm({ ...form, cpf: e.target.value })} />
+            <input required placeholder="CNH" value={form.cnh} onChange={(e) => setForm({ ...form, cnh: e.target.value })} />
+            <input placeholder="Telefone" value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} />
+            <input placeholder="E-mail" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            <button type="submit">Salvar</button>
+          </FormCard>
+        )}
+
         <TableCard>
           <TableHeader>
             <TableTitle>Motoristas Cadastrados</TableTitle>
-            <TotalBadge>{drivers.length} ativos</TotalBadge>
+            <TotalBadge>{list.length} ativos</TotalBadge>
           </TableHeader>
 
           <TableResponsiveWrapper>

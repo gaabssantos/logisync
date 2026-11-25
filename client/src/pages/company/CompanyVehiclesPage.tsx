@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import styled from 'styled-components';
 import { CompanySidebar } from '../../components/company/CompanySidebar';
 import { CompanyHeader } from '../../components/company/CompanyHeader';
@@ -13,6 +13,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { api, formatDate } from '../../services/api';
+import { ErrorAlert } from '../../components/ErrorAlert';
 
 const Layout = styled.div`
   display: flex;
@@ -456,6 +458,16 @@ interface VehicleItem {
   lastMaintenance: string;
 }
 
+interface VeiculoApi {
+  id: number; placa: string; modelo: string; tipo: string; capacidade: string;
+  status: 'DISPONIVEL' | 'EM_TRANSITO' | 'MANUTENCAO'; ultimaManutencao: string | null; motorista: string | null;
+}
+
+const TIPO_LABEL: Record<string, string> = {
+  CAMINHAO: 'Caminhão', VAN: 'Van', UTILITARIO: 'Utilitário', CARRO: 'Carro', MOTO: 'Moto',
+};
+const STATUS_LABEL = { DISPONIVEL: 'DISPONÍVEL', EM_TRANSITO: 'EM TRÂNSITO', MANUTENCAO: 'MANUTENÇÃO' } as const;
+
 export const CompanyVehiclesPage = () => {
   const [filterStatus, setFilterStatus] = useState<
     'Todos' | 'Disponíveis' | 'Em Trânsito' | 'Manutenção'
@@ -463,53 +475,44 @@ export const CompanyVehiclesPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Lista com dados e formato idênticos à imagem fornecida pelo usuário
-  const [vehicles, setVehicles] = useState<VehicleItem[]>([
-    {
-      id: '1',
-      type: 'Caminhão',
-      model: 'Mercedes-Benz',
-      plate: 'ABC-1234',
-      status: 'DISPONÍVEL',
-      driver: 'Marco Silva',
-      capacity: '15 toneladas',
-      lastMaintenance: '12/08/2025',
-    },
-    {
-      id: '2',
-      type: 'Caminhão',
-      model: 'Mercedes-Benz',
-      plate: 'ABC-1234',
-      status: 'EM TRÂNSITO',
-      driver: 'Marco Silva',
-      capacity: '15 toneladas',
-      lastMaintenance: '12/08/2025',
-    },
-    {
-      id: '3',
-      type: 'Caminhão',
-      model: 'Mercedes-Benz',
-      plate: 'ABC-1234',
-      status: 'MANUTENÇÃO',
-      driver: 'Marco Silva',
-      capacity: '15 toneladas',
-      lastMaintenance: '12/08/2025',
-    },
-    {
-      id: '4',
-      type: 'Caminhão',
-      model: 'Mercedes-Benz',
-      plate: 'ABC-1234',
-      status: 'MANUTENÇÃO',
-      driver: 'Marco Silva',
-      capacity: '15 toneladas',
-      lastMaintenance: '12/08/2025',
-    },
-  ]);
+  // Veículos e motoristas carregados da API (RF11, RF12, RF13)
+  const [vehicles, setVehicles] = useState<VehicleItem[]>([]);
+  const [drivers, setDrivers] = useState<{ id: number; nome: string; veiculo: string | null }[]>([]);
+  const [error, setError] = useState('');
+
+  const loadVehicles = async () => {
+    try {
+      const rows = await api<VeiculoApi[]>('/veiculos');
+      setVehicles(rows.map((v) => ({
+        id: String(v.id),
+        type: TIPO_LABEL[v.tipo] || v.tipo,
+        model: v.modelo,
+        plate: v.placa,
+        status: STATUS_LABEL[v.status],
+        driver: v.motorista || 'Não atribuído',
+        capacity: `${Number(v.capacidade).toLocaleString('pt-BR')} kg`,
+        lastMaintenance: v.ultimaManutencao ? formatDate(v.ultimaManutencao) : '-',
+      })));
+      setDrivers(await api('/motoristas'));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  useEffect(() => {
+    loadVehicles();
+  }, []);
+
+  const metrics = useMemo(() => ({
+    total: vehicles.length,
+    disponiveis: vehicles.filter((v) => v.status === 'DISPONÍVEL').length,
+    transito: vehicles.filter((v) => v.status === 'EM TRÂNSITO').length,
+    manutencao: vehicles.filter((v) => v.status === 'MANUTENÇÃO').length,
+  }), [vehicles]);
 
   // Form states novo veículo
   const [newModel, setNewModel] = useState('');
-  const [newType, setNewType] = useState('Caminhão');
+  const [newType, setNewType] = useState('CAMINHAO');
   const [newPlate, setNewPlate] = useState('');
   const [newDriver, setNewDriver] = useState('');
   const [newCapacity, setNewCapacity] = useState('');
@@ -530,44 +533,48 @@ export const CompanyVehiclesPage = () => {
     });
   }, [vehicles, filterStatus, searchTerm]);
 
-  const handleAddVehicle = (e: React.FormEvent) => {
+  // RF12: cadastro de veículo (a API recusa placas duplicadas)
+  const handleAddVehicle = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newVehicle: VehicleItem = {
-      id: String(Date.now()),
-      type: newType,
-      model: newModel,
-      plate: newPlate.toUpperCase(),
-      status: 'DISPONÍVEL',
-      driver: newDriver || 'Não atribuído',
-      capacity: newCapacity || '10 toneladas',
-      lastMaintenance: new Date().toLocaleDateString('pt-BR'),
-    };
-
-    setVehicles([newVehicle, ...vehicles]);
-    setIsModalOpen(false);
-    setNewModel('');
-    setNewPlate('');
-    setNewDriver('');
-    setNewCapacity('');
-  };
-
-  const handleDelete = (id: string, model: string, plate: string) => {
-    if (confirm(`Remover veículo ${model} (${plate})?`)) {
-      setVehicles(vehicles.filter((v) => v.id !== id));
+    setError('');
+    try {
+      await api('/veiculos', {
+        method: 'POST',
+        body: { placa: newPlate.replace('-', '').trim(), modelo: newModel, tipo: newType,
+                capacidade: Number(newCapacity.replace(/\D/g, '')) || 0, idMotorista: newDriver ? Number(newDriver) : null },
+      });
+      setIsModalOpen(false);
+      setNewModel('');
+      setNewPlate('');
+      setNewDriver('');
+      setNewCapacity('');
+      await loadVehicles();
+    } catch (err) {
+      setError((err as Error).message);
+      setIsModalOpen(false);
     }
   };
 
-  const handleToggleMaintenance = (id: string) => {
-    setVehicles(
-      vehicles.map((v) => {
-        if (v.id === id) {
-          const nextStatus =
-            v.status === 'MANUTENÇÃO' ? 'DISPONÍVEL' : 'MANUTENÇÃO';
-          return { ...v, status: nextStatus };
-        }
-        return v;
-      })
-    );
+  const handleDelete = async (id: string, model: string, plate: string) => {
+    if (!confirm(`Remover veículo ${model} (${plate})?`)) return;
+    setError('');
+    try {
+      await api(`/veiculos/${id}`, { method: 'DELETE' });
+      await loadVehicles();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  // RF11: registra a manutenção (veículos em manutenção não recebem entregas)
+  const handleToggleMaintenance = async (id: string) => {
+    setError('');
+    try {
+      await api(`/veiculos/${id}/manutencao`, { method: 'PATCH' });
+      await loadVehicles();
+    } catch (err) {
+      setError((err as Error).message);
+    }
   };
 
   return (
@@ -584,7 +591,7 @@ export const CompanyVehiclesPage = () => {
               <Truck size={24} />
             </IconBadge>
             <MetricInfo>
-              <MetricValue>12</MetricValue>
+              <MetricValue>{metrics.total}</MetricValue>
               <MetricLabel>Total de Veículos</MetricLabel>
             </MetricInfo>
           </MetricCard>
@@ -594,7 +601,7 @@ export const CompanyVehiclesPage = () => {
               <CheckCircle2 size={24} />
             </IconBadge>
             <MetricInfo>
-              <MetricValue>8</MetricValue>
+              <MetricValue>{metrics.disponiveis}</MetricValue>
               <MetricLabel>Disponíveis</MetricLabel>
             </MetricInfo>
           </MetricCard>
@@ -604,7 +611,7 @@ export const CompanyVehiclesPage = () => {
               <Truck size={24} />
             </IconBadge>
             <MetricInfo>
-              <MetricValue>3</MetricValue>
+              <MetricValue>{metrics.transito}</MetricValue>
               <MetricLabel>Em Trânsito</MetricLabel>
             </MetricInfo>
           </MetricCard>
@@ -614,13 +621,15 @@ export const CompanyVehiclesPage = () => {
               <AlertTriangle size={24} />
             </IconBadge>
             <MetricInfo>
-              <MetricValue>1</MetricValue>
+              <MetricValue>{metrics.manutencao}</MetricValue>
               <MetricLabel>Manutenção</MetricLabel>
             </MetricInfo>
           </MetricCard>
         </MetricsGrid>
 
         {/* Barra de Filtros e Busca */}
+        {error && <ErrorAlert role="alert">{error}</ErrorAlert>}
+
         <FilterCard>
           <SearchInputWrapper>
             <Search size={18} color="#94a3b8" />
@@ -748,10 +757,11 @@ export const CompanyVehiclesPage = () => {
                       value={newType}
                       onChange={(e) => setNewType(e.target.value)}
                     >
-                      <option value="Caminhão">Caminhão</option>
-                      <option value="Van">Van</option>
-                      <option value="Furgão">Furgão</option>
-                      <option value="Carreta">Carreta</option>
+                      <option value="CAMINHAO">Caminhão</option>
+                      <option value="VAN">Van</option>
+                      <option value="UTILITARIO">Utilitário</option>
+                      <option value="CARRO">Carro</option>
+                      <option value="MOTO">Moto</option>
                     </select>
                   </FormGroup>
 
@@ -781,19 +791,20 @@ export const CompanyVehiclesPage = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
                   <FormGroup>
                     <label>Motorista Responsável</label>
-                    <input
-                      type="text"
-                      placeholder="Ex: Marco Silva"
-                      value={newDriver}
-                      onChange={(e) => setNewDriver(e.target.value)}
-                    />
+                    <select value={newDriver} onChange={(e) => setNewDriver(e.target.value)}>
+                      <option value="">Não atribuído</option>
+                      {drivers.filter((d) => !d.veiculo).map((d) => (
+                        <option key={d.id} value={d.id}>{d.nome}</option>
+                      ))}
+                    </select>
                   </FormGroup>
 
                   <FormGroup>
-                    <label>Capacidade de Carga</label>
+                    <label>Capacidade de Carga (kg)</label>
                     <input
                       type="text"
-                      placeholder="Ex: 15 toneladas"
+                      required
+                      placeholder="Ex: 5000"
                       value={newCapacity}
                       onChange={(e) => setNewCapacity(e.target.value)}
                     />

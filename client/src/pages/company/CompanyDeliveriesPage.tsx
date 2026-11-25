@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import styled from 'styled-components';
 import { CompanySidebar } from '../../components/company/CompanySidebar';
 import { CompanyHeader } from '../../components/company/CompanyHeader';
@@ -10,6 +10,8 @@ import {
   Search,
   Phone,
 } from 'lucide-react';
+import { api, formatDateTime } from '../../services/api';
+import { ErrorAlert } from '../../components/ErrorAlert';
 
 const Layout = styled.div`
   display: flex;
@@ -283,6 +285,20 @@ const StatusPill = styled.span<{
   }}
 `;
 
+const StatusActionButton = styled.button`
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-right: 6px;
+
+  &:hover {
+    background: #dbeafe;
+  }
+`;
+
 const PhoneCallButton = styled.button`
   background: transparent;
   color: #ef4444;
@@ -357,18 +373,30 @@ const PageNumberButton = styled.button<{ $active?: boolean }>`
       `}
 `;
 
-const PageEllipsis = styled.span`
-  color: #94a3b8;
-  font-size: 0.85rem;
-  padding: 0 0.25rem;
-`;
-
 interface DeliveryItem {
+  dbId: number;
   id: string;
   route: string;
   driver: string;
+  phone: string;
+  dbStatus: string;
   status: 'AGUARDANDO' | 'ENTREGUE' | 'EM TRÂNSITO' | 'ATRASADA';
   eta: string;
+}
+
+interface EntregaApi {
+  id: number; codigo: string; origem: string; destino: string; motorista: string; telefone: string;
+  placa: string; status: string; previsao: string; atrasada: number;
+}
+
+function toItem(e: EntregaApi): DeliveryItem {
+  const status: DeliveryItem['status'] = e.status === 'ENTREGUE' ? 'ENTREGUE'
+    : e.atrasada ? 'ATRASADA' : e.status === 'EM_TRANSITO' ? 'EM TRÂNSITO' : 'AGUARDANDO';
+  return {
+    dbId: e.id, id: e.codigo, route: `${e.origem} - ${e.destino}`, driver: e.motorista, phone: e.telefone,
+    dbStatus: e.status, status,
+    eta: e.status === 'ENTREGUE' ? 'Concluído' : `${e.atrasada ? 'Atrasada desde ' : ''}${formatDateTime(e.previsao)}`,
+  };
 }
 
 export const CompanyDeliveriesPage = () => {
@@ -376,53 +404,46 @@ export const CompanyDeliveriesPage = () => {
     'Todos' | 'Aguardando' | 'Em Trânsito' | 'Entregues' | 'Atrasados'
   >('Todos');
   const [searchTerm, setSearchTerm] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
 
-  // Lista com dados fiéis à imagem fornecida
-  const deliveries: DeliveryItem[] = [
-    {
-      id: '#ENT01',
-      route: 'Santo André - São Paulo',
-      driver: 'João Silva',
-      status: 'AGUARDANDO',
-      eta: 'Quarta-feira 16:30',
-    },
-    {
-      id: '#ENT02',
-      route: 'Santo André - São Paulo',
-      driver: 'Ana Santos',
-      status: 'ENTREGUE',
-      eta: 'Concluído',
-    },
-    {
-      id: '#ENT03',
-      route: 'Santo André - São Paulo',
-      driver: 'Carlos Mendes',
-      status: 'EM TRÂNSITO',
-      eta: 'Amanhã 12:00',
-    },
-    {
-      id: '#ENT04',
-      route: 'Santo André - São Paulo',
-      driver: 'Fernanda Lima',
-      status: 'ATRASADA',
-      eta: 'Atrasada 2h',
-    },
-    {
-      id: '#ENT05',
-      route: 'Santo André - São Paulo',
-      driver: 'Roberto Alves',
-      status: 'EM TRÂNSITO',
-      eta: 'Amanhã 19:30',
-    },
-    {
-      id: '#ENT06',
-      route: 'Santo André - São Paulo',
-      driver: 'Roberto Alves',
-      status: 'ENTREGUE',
-      eta: 'Concluído',
-    },
-  ];
+  // Entregas carregadas da API (RF08, RF09)
+  const [deliveries, setDeliveries] = useState<DeliveryItem[]>([]);
+  const [error, setError] = useState('');
+
+  const loadDeliveries = async () => {
+    try {
+      setDeliveries((await api<EntregaApi[]>('/entregas')).map(toItem));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  useEffect(() => {
+    loadDeliveries();
+  }, []);
+
+  const metrics = useMemo(() => ({
+    aguardando: deliveries.filter((d) => d.dbStatus === 'AGUARDANDO').length,
+    transito: deliveries.filter((d) => d.dbStatus === 'EM_TRANSITO').length,
+    concluidas: deliveries.filter((d) => d.dbStatus === 'ENTREGUE').length,
+    atrasadas: deliveries.filter((d) => d.status === 'ATRASADA').length,
+  }), [deliveries]);
+
+  // RF09, RF18: avança o status; a conclusão exige o nome de quem recebeu
+  const advanceStatus = async (item: DeliveryItem) => {
+    setError('');
+    try {
+      if (item.dbStatus === 'AGUARDANDO') {
+        await api(`/entregas/${item.dbId}/status`, { method: 'PATCH', body: { status: 'EM_TRANSITO' } });
+      } else {
+        const recebedor = prompt(`Nome de quem recebeu a encomenda ${item.id}:`);
+        if (recebedor === null) return;
+        await api(`/entregas/${item.dbId}/status`, { method: 'PATCH', body: { status: 'ENTREGUE', recebedor: recebedor.trim() } });
+      }
+      await loadDeliveries();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
 
   const filteredDeliveries = useMemo(() => {
     return deliveries.filter((item) => {
@@ -455,7 +476,7 @@ export const CompanyDeliveriesPage = () => {
               <Hourglass size={24} />
             </IconBadge>
             <MetricInfo>
-              <MetricValue>12</MetricValue>
+              <MetricValue>{metrics.aguardando}</MetricValue>
               <MetricLabel>Aguardando Coleta</MetricLabel>
             </MetricInfo>
           </MetricCard>
@@ -465,7 +486,7 @@ export const CompanyDeliveriesPage = () => {
               <Truck size={24} />
             </IconBadge>
             <MetricInfo>
-              <MetricValue>8</MetricValue>
+              <MetricValue>{metrics.transito}</MetricValue>
               <MetricLabel>Em Trânsito</MetricLabel>
             </MetricInfo>
           </MetricCard>
@@ -475,7 +496,7 @@ export const CompanyDeliveriesPage = () => {
               <CheckCircle2 size={24} />
             </IconBadge>
             <MetricInfo>
-              <MetricValue>142</MetricValue>
+              <MetricValue>{metrics.concluidas}</MetricValue>
               <MetricLabel>Concluídos</MetricLabel>
             </MetricInfo>
           </MetricCard>
@@ -485,11 +506,13 @@ export const CompanyDeliveriesPage = () => {
               <AlertTriangle size={24} />
             </IconBadge>
             <MetricInfo>
-              <MetricValue>3</MetricValue>
+              <MetricValue>{metrics.atrasadas}</MetricValue>
               <MetricLabel>Atrasados</MetricLabel>
             </MetricInfo>
           </MetricCard>
         </MetricsGrid>
+
+        {error && <ErrorAlert role="alert">{error}</ErrorAlert>}
 
         {/* Barra de Busca e Filtros */}
         <FilterCard>
@@ -541,7 +564,7 @@ export const CompanyDeliveriesPage = () => {
         <TableCard>
           <TableHeader>
             <TableTitle>Lista de Entregas</TableTitle>
-            <TableTotal>Total: 20 entregas</TableTotal>
+            <TableTotal>Total: {deliveries.length} entregas</TableTotal>
           </TableHeader>
 
           <TableResponsiveWrapper>
@@ -575,10 +598,13 @@ export const CompanyDeliveriesPage = () => {
                       {item.eta}
                     </Td>
                     <Td>
+                      {item.dbStatus !== 'ENTREGUE' && (
+                        <StatusActionButton onClick={() => advanceStatus(item)}>
+                          {item.dbStatus === 'AGUARDANDO' ? 'Iniciar' : 'Concluir'}
+                        </StatusActionButton>
+                      )}
                       <PhoneCallButton
-                        onClick={() =>
-                          alert(`Ligando para o condutor da entrega ${item.id} (${item.driver})...`)
-                        }
+                        onClick={() => alert(`Telefone do motorista ${item.driver}: ${item.phone}`)}
                         title={`Ligar para ${item.driver}`}
                       >
                         <Phone size={16} />
@@ -592,44 +618,9 @@ export const CompanyDeliveriesPage = () => {
 
           {/* Paginação */}
           <PaginationWrapper>
-            <PageNavButton
-              disabled={currentPage === 1}
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-            >
-              ◀ Anterior
-            </PageNavButton>
-
-            <PageNumberButton
-              $active={currentPage === 1}
-              onClick={() => setCurrentPage(1)}
-            >
-              1
-            </PageNumberButton>
-            <PageNumberButton
-              $active={currentPage === 2}
-              onClick={() => setCurrentPage(2)}
-            >
-              2
-            </PageNumberButton>
-            <PageNumberButton
-              $active={currentPage === 3}
-              onClick={() => setCurrentPage(3)}
-            >
-              3
-            </PageNumberButton>
-
-            <PageEllipsis>...</PageEllipsis>
-
-            <PageNumberButton
-              $active={currentPage === 63}
-              onClick={() => setCurrentPage(63)}
-            >
-              63
-            </PageNumberButton>
-
-            <PageNavButton onClick={() => setCurrentPage((p) => p + 1)}>
-              Próximo ▶
-            </PageNavButton>
+            <PageNavButton disabled>◀ Anterior</PageNavButton>
+            <PageNumberButton $active>1</PageNumberButton>
+            <PageNavButton disabled>Próximo ▶</PageNavButton>
           </PaginationWrapper>
         </TableCard>
       </MainArea>

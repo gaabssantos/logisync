@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import { DeliveryTruckIcon } from '../../components/DeliveryTruckIcon';
 import { useAuth } from '../../context/AuthContext';
+import { api, formatDate, formatDateTime } from '../../services/api';
 import {
   Search,
   Package,
@@ -329,48 +330,53 @@ const QuickAccessButton = styled.button`
   }
 `;
 
+const STATUS_LABEL: Record<string, string> = {
+  PENDENTE: 'PENDENTE', EM_SEPARACAO: 'EM SEPARAÇÃO', ENVIADO: 'ENVIADO', AGUARDANDO: 'AGUARDANDO COLETA',
+  EM_TRANSITO: 'EM TRÂNSITO', ENTREGUE: 'ENTREGUE', SAIU_PARA_ENTREGA: 'SAIU PARA ENTREGA', CANCELADO: 'CANCELADO', CANCELADA: 'CANCELADA',
+};
+
+interface Envio { codigo: string; destino: string; data: string; status: string }
+interface Rastreio {
+  codigo: string; origem: string; destino: string; statusPedido: string; statusEntrega: string | null; previsao: string | null;
+  historico: { dataHora: string; status: string; localizacao: string | null }[];
+}
+
 export const UserDashboardPage = () => {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const [trackingCode, setTrackingCode] = useState('');
-  const [trackingResult, setTrackingResult] = useState<string | null>(null);
+  const [tracking, setTracking] = useState<{ ok: boolean; lines: string[] } | null>(null);
 
-  // Lista com os envios adicionados automaticamente na tela
-  const [shipments] = useState([
-    {
-      id: '1',
-      code: 'BR123456789BR',
-      location: 'São Paulo, SP',
-      date: 'Enviado em 28/11/2025',
-      status: 'EM TRÂNSITO',
-    },
-    {
-      id: '2',
-      code: 'BR123456789BR',
-      location: 'São Paulo, SP',
-      date: 'Enviado em 28/11/2025',
-      status: 'EM TRÂNSITO',
-    },
-    {
-      id: '3',
-      code: 'BR123456789BR',
-      location: 'São Paulo, SP',
-      date: 'Enviado em 28/11/2025',
-      status: 'EM TRÂNSITO',
-    },
-  ]);
+  // RF17: envios do cliente carregados da API
+  const [shipments, setShipments] = useState<Envio[]>([]);
+  useEffect(() => {
+    api<Envio[]>('/meus-envios').then(setShipments).catch(() => setShipments([]));
+  }, []);
 
-  const displayName = 'Carlos Mendonça';
-  const displayEmail = 'carlos.mendonca@email.com';
-  const initials = 'CM';
+  const displayName = user?.name || 'Cliente LogiSync';
+  const displayEmail = user?.email || '';
+  const initials = displayName.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase();
+  const delivered = shipments.filter((s) => s.status === 'ENTREGUE').length;
 
-  const handleTrack = () => {
+  // RF16: rastreamento pelo código
+  const handleTrack = async () => {
     if (!trackingCode.trim()) {
-      alert('Por favor, informe o código de rastreamento.');
+      setTracking({ ok: false, lines: ['Informe o código de rastreamento.'] });
       return;
     }
-    setTrackingResult(
-      `Encomenda [${trackingCode.toUpperCase()}]: Saiu para entrega ao destinatário às 14:15 em São Paulo, SP.`
-    );
+    try {
+      const r = await api<Rastreio>(`/rastreamento/${encodeURIComponent(trackingCode.trim())}`);
+      const status = STATUS_LABEL[r.statusEntrega || r.statusPedido] || r.statusEntrega || r.statusPedido;
+      setTracking({
+        ok: true,
+        lines: [
+          `Encomenda ${r.codigo}: ${status}`,
+          `${r.origem} → ${r.destino}${r.previsao ? ` · previsão ${formatDateTime(r.previsao)}` : ''}`,
+          ...r.historico.map((h) => `${formatDateTime(h.dataHora)} · ${STATUS_LABEL[h.status] || h.status}${h.localizacao ? ` · ${h.localizacao}` : ''}`),
+        ],
+      });
+    } catch (err) {
+      setTracking({ ok: false, lines: [(err as Error).message] });
+    }
   };
 
   return (
@@ -408,7 +414,7 @@ export const UserDashboardPage = () => {
               <TrackingInputWrapper>
                 <input
                   type="text"
-                  placeholder="Digite o código de rastreamento (Ex.: BR123456789BR)"
+                  placeholder="Digite o código de rastreamento (Ex.: LS2026110003)"
                   value={trackingCode}
                   onChange={(e) => setTrackingCode(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleTrack()}
@@ -416,19 +422,21 @@ export const UserDashboardPage = () => {
                 <TrackButton onClick={handleTrack}>Rastrear</TrackButton>
               </TrackingInputWrapper>
 
-              {trackingResult && (
+              {tracking && (
                 <div
                   style={{
                     marginTop: '1rem',
                     padding: '0.85rem 1rem',
                     borderRadius: '8px',
-                    backgroundColor: '#ecfdf5',
-                    color: '#065f46',
+                    backgroundColor: tracking.ok ? '#ecfdf5' : '#fef2f2',
+                    color: tracking.ok ? '#065f46' : '#991b1b',
                     fontSize: '0.85rem',
-                    border: '1px solid #a7f3d0',
+                    border: `1px solid ${tracking.ok ? '#a7f3d0' : '#fecaca'}`,
                   }}
                 >
-                  {trackingResult}
+                  {tracking.lines.map((l, i) => (
+                    <div key={i} style={{ fontWeight: i === 0 ? 700 : 400, marginTop: i > 1 ? 4 : 0 }}>{l}</div>
+                  ))}
                 </div>
               )}
             </WhiteCard>
@@ -438,7 +446,7 @@ export const UserDashboardPage = () => {
               <MetricIconCircle $bg="#0284c7" $color="#ffffff">
                 <Package size={26} />
               </MetricIconCircle>
-              <MetricBigNumber>12</MetricBigNumber>
+              <MetricBigNumber>{shipments.length}</MetricBigNumber>
               <MetricLabelText>Total de Envios</MetricLabelText>
             </MetricCenteredCard>
 
@@ -447,7 +455,7 @@ export const UserDashboardPage = () => {
               <MetricIconCircle $bg="#10b981" $color="#ffffff">
                 <CheckCircle2 size={26} />
               </MetricIconCircle>
-              <MetricBigNumber>8</MetricBigNumber>
+              <MetricBigNumber>{delivered}</MetricBigNumber>
               <MetricLabelText>Entregues</MetricLabelText>
             </MetricCenteredCard>
           </LeftColumn>
@@ -467,17 +475,20 @@ export const UserDashboardPage = () => {
               </ShipmentsHeader>
 
               <ShipmentsList>
+                {shipments.length === 0 && (
+                  <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Nenhum envio vinculado à sua conta.</span>
+                )}
                 {shipments.map((shipment) => (
-                  <ShipmentItem key={shipment.id}>
+                  <ShipmentItem key={shipment.codigo}>
                     <ShipmentDetails>
-                      <span className="code">{shipment.code}</span>
+                      <span className="code">{shipment.codigo}</span>
                       <div className="location-row">
                         <MapPin size={15} color="#ef4444" />
-                        <span>{shipment.location}</span>
+                        <span>{shipment.destino}</span>
                       </div>
-                      <span className="date">{shipment.date}</span>
+                      <span className="date">Enviado em {formatDate(shipment.data)}</span>
                     </ShipmentDetails>
-                    <StatusPill>{shipment.status}</StatusPill>
+                    <StatusPill>{STATUS_LABEL[shipment.status] || shipment.status}</StatusPill>
                   </ShipmentItem>
                 ))}
               </ShipmentsList>

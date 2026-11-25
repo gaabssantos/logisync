@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { TOKEN_KEY } from '../services/api';
 
 export interface User {
   name: string;
@@ -10,7 +11,7 @@ export interface User {
 interface AuthContextData {
   user: User | null;
   isAuthenticated: boolean;
-  login: (userData: User) => void;
+  login: (userData: User, token?: string) => void;
   logout: () => void;
 }
 
@@ -37,11 +38,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user]);
 
-  const login = (userData: User) => {
+  const login = (userData: User, token?: string) => {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
     setUser(userData);
   };
 
   const logout = () => {
+    localStorage.removeItem(TOKEN_KEY);
     setUser(null);
   };
 

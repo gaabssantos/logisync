@@ -1,8 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import styled from 'styled-components';
 import { CompanySidebar } from '../../components/company/CompanySidebar';
 import { CompanyHeader } from '../../components/company/CompanyHeader';
 import { Search, PlusCircle, Pencil, Trash2, X } from 'lucide-react';
+import { api, formatDate, formatMoney } from '../../services/api';
+import { ErrorAlert } from '../../components/ErrorAlert';
 
 const Layout = styled.div`
   display: flex;
@@ -186,7 +188,15 @@ const CodeText = styled.span`
   color: #94a3b8;
 `;
 
-const StatusPill = styled.span<{ $status: 'PREPARANDO' | 'PENDENTE' }>`
+const STATUS_COLORS: Record<string, [string, string]> = {
+  PENDENTE: ['#fee2e2', '#dc2626'],
+  PREPARANDO: ['#dbeafe', '#2563eb'],
+  ENVIADO: ['#ede9fe', '#7c3aed'],
+  ENTREGUE: ['#dcfce7', '#16a34a'],
+  CANCELADO: ['#f1f5f9', '#64748b'],
+};
+
+const StatusPill = styled.span<{ $status: string }>`
   display: inline-block;
   padding: 0.28rem 0.75rem;
   border-radius: 9999px;
@@ -194,17 +204,8 @@ const StatusPill = styled.span<{ $status: 'PREPARANDO' | 'PENDENTE' }>`
   font-weight: 700;
   letter-spacing: 0.4px;
   text-transform: uppercase;
-
-  ${({ $status }) =>
-    $status === 'PREPARANDO'
-      ? `
-        background-color: #dbeafe;
-        color: #2563eb;
-      `
-      : `
-        background-color: #fee2e2;
-        color: #dc2626;
-      `}
+  background-color: ${({ $status }) => (STATUS_COLORS[$status] || STATUS_COLORS.CANCELADO)[0]};
+  color: ${({ $status }) => (STATUS_COLORS[$status] || STATUS_COLORS.CANCELADO)[1]};
 `;
 
 const PriorityPill = styled.span<{ $priority: 'Alta' | 'Média' | 'Baixa' }>`
@@ -328,12 +329,6 @@ const PageNumberButton = styled.button<{ $active?: boolean }>`
       `}
 `;
 
-const PageEllipsis = styled.span`
-  color: #94a3b8;
-  font-size: 0.85rem;
-  padding: 0 0.25rem;
-`;
-
 /* Modal de Novo Pedido */
 const ModalOverlay = styled.div`
   position: fixed;
@@ -421,105 +416,60 @@ const ModalSubmitButton = styled.button`
 `;
 
 interface OrderItem {
+  dbId: number;
   id: string;
   client: string;
   origin: string;
   destination: string;
-  status: 'PREPARANDO' | 'PENDENTE';
+  status: string;
   priority: 'Alta' | 'Média' | 'Baixa';
   date: string;
   value: string;
 }
 
+interface PedidoApi {
+  id: number; codigo: string; cliente: string; origem: string; destino: string;
+  data: string; valor: string; prioridade: 'ALTA' | 'MEDIA' | 'BAIXA'; status: string;
+}
+
+// rótulos exibidos na tela para os valores gravados no banco
+const STATUS_LABEL: Record<string, string> = {
+  PENDENTE: 'PENDENTE', EM_SEPARACAO: 'PREPARANDO', ENVIADO: 'ENVIADO', ENTREGUE: 'ENTREGUE', CANCELADO: 'CANCELADO',
+};
+const PRIORIDADE_LABEL = { ALTA: 'Alta', MEDIA: 'Média', BAIXA: 'Baixa' } as const;
+const PRIORIDADE_API = { Alta: 'ALTA', 'Média': 'MEDIA', Baixa: 'BAIXA' } as const;
+
 export const CompanyOrdersPage = () => {
   const [filterStatus, setFilterStatus] = useState<'Todos' | 'PENDENTE' | 'PREPARANDO'>('Todos');
   const [searchTerm, setSearchTerm] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Lista inicial com todos os itens exibidos na imagem enviada pelo usuário
-  const [orders, setOrders] = useState<OrderItem[]>([
-    {
-      id: '#001',
-      client: 'João Silva',
-      origin: 'São Paulo, SP',
-      destination: 'Vitória, ES',
-      status: 'PREPARANDO',
-      priority: 'Média',
-      date: '14/09/2025',
-      value: 'R$ 89,90',
-    },
-    {
-      id: '#002',
-      client: 'Marcos',
-      origin: 'Salvador, BA',
-      destination: 'Natal, RN',
-      status: 'PENDENTE',
-      priority: 'Alta',
-      date: '13/09/2025',
-      value: 'R$ 67,50',
-    },
-    {
-      id: '#003',
-      client: 'Antonio',
-      origin: 'Porto Alegre, RS',
-      destination: 'Belém, PA',
-      status: 'PENDENTE',
-      priority: 'Baixa',
-      date: '12/09/2025',
-      value: 'R$ 125,00',
-    },
-    {
-      id: '#004',
-      client: 'Lucas',
-      origin: 'Recife, PE',
-      destination: 'Curitiba, PR',
-      status: 'PREPARANDO',
-      priority: 'Média',
-      date: '11/09/2025',
-      value: 'R$ 45,20',
-    },
-    {
-      id: '#005',
-      client: 'Roberto',
-      origin: 'Curitiba, PR',
-      destination: 'Recife, PE',
-      status: 'PENDENTE',
-      priority: 'Baixa',
-      date: '14/09/2025',
-      value: 'R$ 98,75',
-    },
-    {
-      id: '#006',
-      client: 'Carlos',
-      origin: 'Belém, PA',
-      destination: 'Porto Alegre, RS',
-      status: 'PREPARANDO',
-      priority: 'Baixa',
-      date: '13/09/2025',
-      value: 'R$ 156,80',
-    },
-    {
-      id: '#006',
-      client: 'Ana Clara',
-      origin: 'Natal, RN',
-      destination: 'Salvador, BA',
-      status: 'PENDENTE',
-      priority: 'Média',
-      date: '12/09/2025',
-      value: 'R$ 189,40',
-    },
-    {
-      id: '#007',
-      client: 'Julia',
-      origin: 'Vitória, ES',
-      destination: 'São Paulo, SP',
-      status: 'PENDENTE',
-      priority: 'Baixa',
-      date: '14/09/2025',
-      value: 'R$ 112,30',
-    },
-  ]);
+  // Pedidos carregados da API (RF07)
+  const [orders, setOrders] = useState<OrderItem[]>([]);
+  const [error, setError] = useState('');
+
+  const loadOrders = async () => {
+    try {
+      const rows = await api<PedidoApi[]>('/pedidos');
+      setOrders(rows.map((r) => ({
+        dbId: r.id,
+        id: r.codigo,
+        client: r.cliente,
+        origin: r.origem,
+        destination: r.destino,
+        status: STATUS_LABEL[r.status] || r.status,
+        priority: PRIORIDADE_LABEL[r.prioridade] || 'Média',
+        date: formatDate(r.data),
+        value: formatMoney(r.valor),
+      })));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  useEffect(() => {
+    loadOrders();
+  }, []);
 
   // Form novo pedido
   const [newClient, setNewClient] = useState('');
@@ -541,32 +491,37 @@ export const CompanyOrdersPage = () => {
     });
   }, [orders, filterStatus, searchTerm]);
 
-  const handleCreateOrder = (e: React.FormEvent) => {
+  // RF05: cadastro de pedido na API
+  const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    const nextNum = orders.length + 1;
-    const formattedId = `#${String(nextNum).padStart(3, '0')}`;
-    const newOrder: OrderItem = {
-      id: formattedId,
-      client: newClient,
-      origin: newOrigin,
-      destination: newDestination,
-      status: 'PREPARANDO',
-      priority: newPriority,
-      date: new Date().toLocaleDateString('pt-BR'),
-      value: newValue.startsWith('R$') ? newValue : `R$ ${newValue}`,
-    };
-
-    setOrders([newOrder, ...orders]);
-    setIsModalOpen(false);
-    setNewClient('');
-    setNewOrigin('');
-    setNewDestination('');
-    setNewValue('');
+    setError('');
+    try {
+      await api('/pedidos', {
+        method: 'POST',
+        body: { cliente: newClient, origem: newOrigin, destino: newDestination,
+                valor: newValue.replace('R$', '').trim(), prioridade: PRIORIDADE_API[newPriority] },
+      });
+      setIsModalOpen(false);
+      setNewClient('');
+      setNewOrigin('');
+      setNewDestination('');
+      setNewValue('');
+      await loadOrders();
+    } catch (err) {
+      setError((err as Error).message);
+      setIsModalOpen(false);
+    }
   };
 
-  const handleDelete = (id: string, client: string) => {
-    if (confirm(`Tem certeza que deseja remover o pedido de ${client}?`)) {
-      setOrders(orders.filter((o) => o.id !== id));
+  // RF06: exclusão (a API recusa pedidos que não estão pendentes)
+  const handleDelete = async (dbId: number, client: string) => {
+    if (!confirm(`Tem certeza que deseja remover o pedido de ${client}?`)) return;
+    setError('');
+    try {
+      await api(`/pedidos/${dbId}`, { method: 'DELETE' });
+      await loadOrders();
+    } catch (err) {
+      setError((err as Error).message);
     }
   };
 
@@ -578,6 +533,8 @@ export const CompanyOrdersPage = () => {
         <CompanyHeader title="Pedidos" />
 
         {/* Barra de Filtros e Ações */}
+        {error && <ErrorAlert role="alert">{error}</ErrorAlert>}
+
         <FilterCard>
           <SearchInputWrapper>
             <Search size={18} color="#94a3b8" />
@@ -673,7 +630,7 @@ export const CompanyOrdersPage = () => {
                         </ActionButton>
                         <ActionButton
                           $type="delete"
-                          onClick={() => handleDelete(order.id, order.client)}
+                          onClick={() => handleDelete(order.dbId, order.client)}
                           aria-label="Excluir Pedido"
                         >
                           <Trash2 size={15} />
@@ -688,44 +645,9 @@ export const CompanyOrdersPage = () => {
 
           {/* Paginação */}
           <PaginationWrapper>
-            <PageNavButton
-              disabled={currentPage === 1}
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-            >
-              ◀ Anterior
-            </PageNavButton>
-
-            <PageNumberButton
-              $active={currentPage === 1}
-              onClick={() => setCurrentPage(1)}
-            >
-              1
-            </PageNumberButton>
-            <PageNumberButton
-              $active={currentPage === 2}
-              onClick={() => setCurrentPage(2)}
-            >
-              2
-            </PageNumberButton>
-            <PageNumberButton
-              $active={currentPage === 3}
-              onClick={() => setCurrentPage(3)}
-            >
-              3
-            </PageNumberButton>
-
-            <PageEllipsis>...</PageEllipsis>
-
-            <PageNumberButton
-              $active={currentPage === 63}
-              onClick={() => setCurrentPage(63)}
-            >
-              63
-            </PageNumberButton>
-
-            <PageNavButton onClick={() => setCurrentPage((p) => p + 1)}>
-              Próximo ▶
-            </PageNavButton>
+            <PageNavButton disabled>◀ Anterior</PageNavButton>
+            <PageNumberButton $active>1</PageNumberButton>
+            <PageNavButton disabled>Próximo ▶</PageNavButton>
           </PaginationWrapper>
         </TableCard>
 
